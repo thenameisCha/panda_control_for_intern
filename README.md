@@ -41,3 +41,16 @@ make -j9
 * `src/main_torque_control.cpp`: main enterance of the torque controller program.
 * `src/main_position_control.cpp`: main enterance of the position controller program.
 * `src/controller.cpp`, `include/controller.h`: controller codes.
+
+
+## Troubleshooting
+1. `communication_constraints_violation`: 
+    - Plase confirm that the project is built with `-DCMAKE_BUILD_TYPE=RELEASE`
+
+2. `UDP receive: Timeout`:
+    - ask for help with the results of `3. simple ping test`
+
+3. simple ping test
+    ```
+    sudo ping 172.16.2.2 -i 0.001 -D -c 10000 -s 1200
+    ```
