@@ -19,7 +19,7 @@ cd panda_control_for_intern
 
 # build the project
 mkdir build
-cmake ..
+cmake .. -DCMAKE_BUILD_TYPE=RELEASE
 make -j9
 ```
 
