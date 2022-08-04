@@ -92,7 +92,7 @@ void MotionGenerator::calculateSynchronizedValues() {
   }
 }
 
-franka::JointPositions MotionGenerator::operator()(const franka::RobotState& robot_state,
+franka::JointPositions MotionGenerator::operator()(const franka::RobotState& robot_state, //outputs desired q
                                                    franka::Duration period) {
   time_ += period.toSec();
 

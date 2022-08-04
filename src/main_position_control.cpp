@@ -109,7 +109,7 @@ int main()
     ac.compute();
 
     std::array<double, 7> position_d_array{};
-    Eigen::Matrix<double, 7, 1>::Map(position_d_array.data()) = ac.getDesiredPosition();
+    Eigen::Matrix<double, 7, 1>::Map(position_d_array.data()) = ac.getPositionInput();
     control_mode_mutex.unlock();
     franka::JointPositions output(position_d_array);
     return output;

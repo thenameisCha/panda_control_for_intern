@@ -101,7 +101,7 @@ int main()
     Eigen::Map<const Eigen::Matrix<double, 7, 1> > dq(robot_state.dq.data());
 
     control_mode_mutex.lock();
-    ac.readData(q,dq);
+    ac.readData(q,dq,coriolis);
     if (is_first) {
       ac.initPosition(robot_state);
       is_first = false;
@@ -112,8 +112,10 @@ int main()
     ac.compute();
 
     std::array<double, 7> tau_d_array{};
-    Eigen::Matrix<double, 7, 1>::Map(&tau_d_array[0], 7) = ac.getDesiredTorque();
+    Eigen::Matrix<double, 7, 1>::Map(&tau_d_array[0], 7) = ac.getTorqueInput();
     control_mode_mutex.unlock();
+    // franka::Torques output(tau_d_array);
+    // return output;
     return tau_d_array;
   };
 
@@ -133,3 +135,5 @@ int main()
   }
   return 0;
 }
+
+// 김준형 님께 프랑카 팔에 늘 쓰는 포스센서 받아와서 설치

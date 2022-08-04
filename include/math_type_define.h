@@ -24,7 +24,7 @@ namespace Eigen
   typedef Matrix<Type, 1, Size>    RowVector##SizeSuffix##TypeSuffix;
 
 	typedef double	rScalar;
-
+	EIGEN_MAKE_TYPEDEFS(rScalar, d, 3, 3)
 	EIGEN_MAKE_TYPEDEFS(rScalar, d, 5, 5)
 	EIGEN_MAKE_TYPEDEFS(rScalar, d, 6, 6)
 	EIGEN_MAKE_TYPEDEFS(rScalar, d, 7, 7)
