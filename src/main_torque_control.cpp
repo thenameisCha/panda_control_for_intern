@@ -6,6 +6,7 @@
 #include <sys/mman.h>	// Needed for mlockall()
 
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <memory>
 #include <thread>
@@ -27,6 +28,9 @@ bool running = true;
 ArmController *ac_ptr;
 std::mutex control_mode_mutex;
 
+double ind = 0;
+Eigen::Matrix<double, 6, 1> sum;
+
 void inputCollector()
 {
   while(running)
@@ -39,7 +43,9 @@ void inputCollector()
       {
         // Implement with user input
         MODE('i', "joint_ctrl_init")
-        MODE('h', "joint_ctrl_home")
+        MODE('e', "ETank")
+        MODE('h', "home")
+        MODE('t', "Test")
       default:
         break;
       }
@@ -54,8 +60,15 @@ int main()
   if (mlockall(MCL_CURRENT | MCL_FUTURE))
     perror("mlockall failed:");
   
-  franka::Robot robot("172.16.2.2");
+  franka::Robot robot("172.16.2.2",  franka::RealtimeConfig::kIgnore );
   franka::Model model = robot.loadModel();
+  const int thread_priority = sched_get_priority_max(SCHED_FIFO);
+  std::cout << thread_priority;
+  sched_param thread_param{};
+  thread_param.sched_priority = thread_priority;
+  if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &thread_param) != 0) {
+    std::cout << "error!";
+  }
 
   robot.setCollisionBehavior(
       {{20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0}}, {{20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0}},
@@ -99,24 +112,43 @@ int main()
     Eigen::Map<const Eigen::Matrix<double, 7, 1> > coriolis(coriolis_array.data());
     Eigen::Map<const Eigen::Matrix<double, 7, 1> > q(robot_state.q.data());
     Eigen::Map<const Eigen::Matrix<double, 7, 1> > dq(robot_state.dq.data());
+    Eigen::Map<const Eigen::Matrix<double, 6, 1> > O_F_Ext_hat_K(robot_state.O_F_ext_hat_K.data());
 
-    control_mode_mutex.lock();
-    ac.readData(q,dq,coriolis);
-    if (is_first) {
-      ac.initPosition(robot_state);
-      is_first = false;
+    // zero-configure exernal wrench
+    if (ind < 10){
+      std::cout << "External Wrench Zero configuring" << std::endl;
+      sum += O_F_Ext_hat_K;
+      ind++;
+      Eigen::Matrix<double, 7, 1> dummy;
+      dummy.setZero();
+      std::array<double, 7> tau_d_array{};
+      Eigen::Matrix<double, 7, 1>::Map(&tau_d_array[0], 7) = dummy;
+      return tau_d_array;
     }
-    current_time += period;
-    
-    ac.readCurrentTime(current_time);
-    ac.compute();
+    else if (ind == 10) {
+      sum = sum / 10;
+      std::cout << "External Wrench Zero Configured" << std::endl;
+      std::cout << "Wrench Error :\t" << std::setprecision(3) << sum.transpose() << std::endl;
+    }
+    if (ind >= 10){
+      control_mode_mutex.lock();
+      ac.readData(q,dq,coriolis, O_F_Ext_hat_K);
+      if (is_first) {
+        ac.initPosition(robot_state);
+        is_first = false;
+      }
+      current_time += period;
+      
+      ac.readCurrentTime(current_time);
+      ac.compute();
 
-    std::array<double, 7> tau_d_array{};
-    Eigen::Matrix<double, 7, 1>::Map(&tau_d_array[0], 7) = ac.getTorqueInput();
-    control_mode_mutex.unlock();
-    // franka::Torques output(tau_d_array);
-    // return output;
-    return tau_d_array;
+      std::array<double, 7> tau_d_array{};
+      Eigen::Matrix<double, 7, 1>::Map(&tau_d_array[0], 7) = ac.getTorqueInput();
+      control_mode_mutex.unlock();
+      // franka::Torques output(tau_d_array);
+      // return output;
+      return tau_d_array;
+    }
   };
 
   try {
@@ -135,5 +167,3 @@ int main()
   }
   return 0;
 }
-
-// 김준형 님께 프랑카 팔에 늘 쓰는 포스센서 받아와서 설치

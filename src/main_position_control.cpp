@@ -54,7 +54,7 @@ int main()
   if (mlockall(MCL_CURRENT | MCL_FUTURE))
     perror("mlockall failed:");
   
-  franka::Robot robot("172.16.2.2");
+  franka::Robot robot("172.16.2.2",  franka::RealtimeConfig::kIgnore );
   franka::Model model = robot.loadModel();
 
   robot.setCollisionBehavior(

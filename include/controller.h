@@ -136,6 +136,7 @@ class ArmController
 	double play_time_;
 	double hz_;
 	double control_start_time_;
+	Matrix6d external_wrench_error;
 
 	std::string control_mode_;
 	bool is_mode_changed_;
@@ -159,10 +160,13 @@ private:
 	void printState();
 	void moveJointPositionTorque(double duration);
 	void ETank(double duration);
+	void Test();
 	void initialize_ETank_controller();
 	void initialize_Home_controller();
+	void initialize_Force_Test();
 	void calculate_desired_ETank(double duration);
 	void calculate_desired_Home(double duration);
+	void calculate_desired_Test();
 	void update_port_power();
 	void update_gamma();
 	void update_tank();
@@ -175,10 +179,9 @@ private:
 	void SGA();
 
 public:
-	void readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &gravity);
-	void readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &gravity, const Vector6d &ee_force);
-	void readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &torque, const Vector7d &gravity);
-	void readData(const Vector7d &position, const Vector7d &velocity);
+	void readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &coriolis);
+	void readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &coriolis, const Vector6d &ee_force);	void readData(const Vector7d &position, const Vector7d &velocity);
+	void readGravityData(const Vector7d &gravity);
 	const Vector7d & getPositionInput();
 	const Vector7d & getTorqueInput(); // return tau_input
 	const Vector6d & getDesiredForce(); // return F_desired	

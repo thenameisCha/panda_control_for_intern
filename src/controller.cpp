@@ -63,16 +63,19 @@ void ArmController::mode_is_changed(){
 	//calculate new start time, init, and target
 	if (control_mode_ == "home"){
 		initialize_Home_controller();
-		
 	}
 	else if (control_mode_ == "ETank"){
 		initialize_ETank_controller();
+	}
+	else if (control_mode_ == "Test"){
+		initialize_Force_Test();
 	}
 }
 
 void ArmController::move(){
 	if (control_mode_ == "home") moveJointPositionTorque(3.0);
 	else if (control_mode_ == "ETank") ETank(1.0);
+	else if (control_mode_ == "Test") Test();
 }
 
 void ArmController::moveJointPositionTorque(double duration){
@@ -90,9 +93,19 @@ void ArmController::ETank(double duration){
 	record(duration);
 }
 
+void ArmController::Test(){
+	port_gamma << 1, 1, 1; //initialize valve gain
+	calculate_desired_Test();
+	update_port_power();
+	//update_gamma();	
+	update_tank();
+	update_torque_input();
+	record(1.0);
+}
+
 void ArmController::initialize_Home_controller(){
-	kp = Matrix7d::Identity() * 500.0;
-	kv = Matrix7d::Identity() * 20;
+	kp = Matrix7d::Identity() * 50.0;
+	kv = Matrix7d::Identity() * 2;
 
 	is_mode_changed_ = false;
 	control_start_time_ = play_time_;
@@ -109,20 +122,20 @@ void ArmController::initialize_ETank_controller(){
 	x_error_integral.setZero();
 	q_error_integral.setZero();
 	tank_E = TANK_INITIAL_E;
-	float scale = 1.0;
-	float scale2 = 0.1;
-	float scale3 = 0.35;
+	float scale = 1.0; // for impedance control
+	float scale2 = 0.01; // for force control
+	float scale3 = 0.35; // for joint space damping
 	Kx = scale * Matrix6d::Identity(); //orientation 에 해당하는 gain must be small ~ 1.0. linear gain ~100
 	Dx = scale * Matrix6d::Identity();
 	Ix = 2.3 * Matrix6d::Identity();
 	Kp = 10 * scale2 * Matrix6d::Identity();
 	Kd = 0.2*scale2 * Matrix6d::Identity();
 	Ki = 150 * scale2 * Matrix6d::Identity();
-	Kx.topLeftCorner(3,3) = Kx.topLeftCorner(3,3) * 400;
-	Dx.topLeftCorner(3,3) = Dx.topLeftCorner(3,3) * 10;
-	Ix.topLeftCorner(3,3) = Ix.topLeftCorner(3,3) * 100;
-	Kx.bottomRightCorner(3,3) = Kx.bottomRightCorner(3,3) * 1.0;
-	Dx.bottomRightCorner(3,3) = Dx.bottomRightCorner(3,3) * 0.7;
+	Kx.topLeftCorner(3,3) = Kx.topLeftCorner(3,3) * 450; //450
+	Dx.topLeftCorner(3,3) = Dx.topLeftCorner(3,3) * 80;  //40
+	Ix.topLeftCorner(3,3) = Ix.topLeftCorner(3,3) * 110;  //110
+	Kx.bottomRightCorner(3,3) = Kx.bottomRightCorner(3,3) * 100;
+	Dx.bottomRightCorner(3,3) = Dx.bottomRightCorner(3,3) * 10;
 	joint_damping = scale3 * Matrix7d::Identity();
 	
 	is_mode_changed_ = false;
@@ -134,12 +147,50 @@ void ArmController::initialize_ETank_controller(){
 	rotation_init_ = rotation_;
 	rotation_init_in_vector = rotation_in_vector;
 	x_target_12d = x_init_12d;
-	x_target_12d(2) -= 0.3;
+	x_target_12d(2) -= 0.2;
 	x_target_6d = x_init_6d;
-	x_target_6d(2) -= 0.3;
+	x_target_6d(2) -= 0.2;
 	rotation_target = rotation_init_;
 	rotation_target_vector = rotation_init_in_vector;
-	x_desired_dot_f << 0, 0, -0.1, 0, 0, 0; // FOR TEST!!!!
+	// x_desired_dot_f << 0, 0, -0.05, 0, 0, 0; // FOR TEST!!!!
+}
+
+void ArmController::initialize_Force_Test(){
+	F_desired.setZero();
+	F_ext_new.setZero();
+	F_ext_old.setZero();
+	F_integral.setZero();
+	x_error_integral.setZero();
+	q_error_integral.setZero();
+	tank_E = TANK_INITIAL_E;
+	float scale = 1.0; // for impedance control
+	float scale2 = 0.1; // for force control
+	float scale3 = 0.35; // for joint space damping
+	Kx = scale * Matrix6d::Identity(); //orientation 에 해당하는 gain must be small ~ 1.0. linear gain ~100
+	Dx = scale * Matrix6d::Identity();
+	Ix = 2.3 * Matrix6d::Identity();
+	Kp = 1 * scale2 * Matrix6d::Identity();
+	Kd = 0*scale2 * Matrix6d::Identity();
+	Ki = 0 * scale2 * Matrix6d::Identity();
+	Kx.topLeftCorner(3,3) = Kx.topLeftCorner(3,3) * 30000; //450
+	Dx.topLeftCorner(3,3) = Dx.topLeftCorner(3,3) * 0;  //40
+	Ix.topLeftCorner(3,3) = Ix.topLeftCorner(3,3) * 0;  //110
+	Kx.bottomRightCorner(3,3) = Kx.bottomRightCorner(3,3) * 10;
+	Dx.bottomRightCorner(3,3) = Dx.bottomRightCorner(3,3) * 0;
+	joint_damping = scale3 * Matrix7d::Identity();
+	
+	is_mode_changed_ = false;
+	control_start_time_ = play_time_;
+	x_init_12d = x_12d_;
+	x_init_6d = x_6d_;
+	x_init_linear = x_linear_;
+	x_dot_init_ = x_dot_;
+	rotation_init_ = rotation_;
+	rotation_init_in_vector = rotation_in_vector;
+	x_target_12d = x_init_12d;
+	x_target_6d = x_init_6d;
+	rotation_target = rotation_init_;
+	rotation_target_vector = rotation_init_in_vector;
 }
 
 void ArmController::calculate_desired_Home(double duration){
@@ -168,6 +219,23 @@ void ArmController::calculate_desired_ETank(double duration){
 	rotation_desired_ = skew.exp();
 	x_desired_12d << x_desired_linear_, rotation_desired_.block<3,1>(0,0), rotation_desired_.block<3,1>(0,1), rotation_desired_.block<3,1>(0,2);
 	x_desired_6d = x_desired_6d_calculated;
+	x_error_ = x_desired_6d - x_6d_;
+	x_error_dot_ = x_desired_dot_ - x_dot_;
+	x_error_integral += x_error_ / hz_;
+}
+
+void ArmController::calculate_desired_Test(){
+	//x_desired calculated
+	x_desired_dot_.setZero();
+	x_desired_linear_ = x_init_6d.segment<3>(0);
+	x_desired_angular = x_init_6d.segment<3>(3);
+	Eigen::Matrix3d skew;
+	skew << 0, -x_desired_angular[5], x_desired_angular[4],
+						x_desired_angular[5], 0, -x_desired_angular[3],
+						-x_desired_angular[4], x_desired_angular[3], 0;
+	rotation_desired_ = skew.exp();
+	x_desired_12d << x_desired_linear_, rotation_desired_.block<3,1>(0,0), rotation_desired_.block<3,1>(0,1), rotation_desired_.block<3,1>(0,2);
+	x_desired_6d << x_desired_linear_, x_desired_angular;
 	x_error_ = x_desired_6d - x_6d_;
 	x_error_dot_ = x_desired_dot_ - x_dot_;
 	x_error_integral += x_error_ / hz_;
@@ -220,6 +288,11 @@ void ArmController::update_torque_input(){
 	tau_force = j_.transpose() * F_F;
 	
 	torque_input = g_+ tau_imp + tau_force;// - joint_damping * q_dot_;
+	}
+	else if (control_mode_ == "Test"){
+		x_error_dot_control = x_desired_dot_control- x_dot_control;
+		tau_imp = j_.transpose() * (Kx*x_error_ + Dx*(-x_error_dot_));
+		torque_input = g_+ tau_imp;// - joint_damping * q_dot_;
 	}
 }
 
@@ -397,13 +470,13 @@ void ArmController::initFile()
 	}
 }
 
-void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &gravity)
+void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &coriolis)
 {
 	for (size_t i = 0; i < dof_; i++)
 	{
 		q_(i) = position(i);
 		q_dot_(i) = velocity(i);
-		g_(i) = gravity(i);
+		g_(i) = coriolis(i);
 	}
 }
 void ArmController::readData(const Vector7d &position, const Vector7d &velocity)
@@ -415,15 +488,28 @@ void ArmController::readData(const Vector7d &position, const Vector7d &velocity)
 		torque_(i) = 0;
 	}
 }
-void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &torque, const Vector6d &gravity){
+void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &coriolis, const Vector6d &ee_force){
 	for (size_t i = 0; i < dof_; i++)
 	{
 		q_(i) = position(i);
 		q_dot_(i) = velocity(i);
-		torque_(i) = torque(i);
-		g_(i) = gravity(i);
+		g_(i) = 0;//coriolis(i); 
+	}
+	for (size_t i = 0; i < 6; i++)
+	{
+		F_ext_old = F_ext_new;
+		if (abs(ee_force(i)) < 10e5 && abs(ee_force(i) > 10e-3)) F_ext_new(i) = -(ee_force(i) - external_wrench_error(i));
 	}
 }
+// void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &torque, const Vector7d &coriolis){
+// 	for (size_t i = 0; i < dof_; i++)
+// 	{
+// 		q_(i) = position(i);
+// 		q_dot_(i) = velocity(i);
+// 		torque_(i) = torque(i);
+// 		g_(i) = coriolis(i);
+// 	}
+// }
 
 const Vector7d & ArmController::getPositionInput()
 {
@@ -471,22 +557,34 @@ void ArmController::printState()
 
 		} 
 		if (control_mode_=="ETank"){
-			cout << "x dot desired times gamma :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << x_desired_dot_.transpose() << endl;
+			//cout << "x dot desired times gamma :\t" << endl;
+			//cout << std::fixed << std::setprecision(3) << x_desired_dot_.transpose() << endl;
 			cout << "x dot current :\t" << endl;
 			cout << std::fixed << std::setprecision(3) << x_dot_.transpose() << endl;
-			cout << "tank E :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << tank_E << endl;
-			cout << "port power :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << port_power.transpose() << endl;
-			cout << "port gamma :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << port_gamma.transpose() << endl;
-			cout << "force sensor input: \t" << endl;
-			cout << std::fixed << std::setprecision(3) << F_ext_new.transpose() << endl;	
-			cout << "S_ur :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << S_ur << endl;		
-			cout << "playtime :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << play_time_ << endl;
+			//cout << "tank E :\t" << endl;
+			//cout << std::fixed << std::setprecision(3) << tank_E << endl;
+			//cout << "port power :\t" << endl;
+			//cout << std::fixed << std::setprecision(3) << port_power.transpose() << endl;
+			//cout << "port gamma :\t" << endl;
+			//cout << std::fixed << std::setprecision(3) << port_gamma.transpose() << endl;
+			//cout << "force sensor input: \t" << endl;
+			//cout << std::fixed << std::setprecision(3) << F_ext_new.transpose() << endl;	
+			//cout << "S_ur :\t" << endl;
+			//cout << std::fixed << std::setprecision(3) << S_ur << endl;		
+			//cout << "playtime :\t" << endl;
+			//cout << std::fixed << std::setprecision(3) << play_time_ << endl;
+		}
+		if (control_mode_ == "Test"){
+			cout << "x dot current :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << x_dot_.transpose() << endl;
+			cout << "x dot desired :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << x_desired_dot_.transpose() << endl;
+			cout << "F external :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << F_ext_new.transpose() << endl;
+			cout << "Torque input :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << torque_input.transpose() << endl;
+			cout << "Force input :\t" << endl;
+			cout << std::fixed << std::setprecision(3) <<  (Kx*x_error_ + Dx*(-x_error_dot_)).transpose() << endl;
 		}
 	}
 }
