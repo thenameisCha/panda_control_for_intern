@@ -28,7 +28,7 @@ bool running = true;
 ArmController *ac_ptr;
 std::mutex control_mode_mutex;
 
-double ind = 0;
+int ind = 0;
 Eigen::Matrix<double, 6, 1> sum;
 
 void inputCollector()
@@ -125,14 +125,14 @@ int main()
       Eigen::Matrix<double, 7, 1>::Map(&tau_d_array[0], 7) = dummy;
       return tau_d_array;
     }
-    else if (ind == 10) {
-      sum = sum / 10;
-      std::cout << "External Wrench Zero Configured" << std::endl;
-      std::cout << "Wrench Error :\t" << std::setprecision(3) << sum.transpose() << std::endl;
-    }
-    if (ind >= 10){
+    else if (ind >= 10){
+      if (ind == 10){
+        sum = sum / 10;
+        std::cout << "External Wrench Zero Configured" << std::endl;
+        std::cout << "Wrench Error :\t" << std::setprecision(3) << sum.transpose() << std::endl;
+      }
       control_mode_mutex.lock();
-      ac.readData(q,dq,coriolis, O_F_Ext_hat_K);
+      ac.readData(q,dq,coriolis, O_F_Ext_hat_K - sum);
       if (is_first) {
         ac.initPosition(robot_state);
         is_first = false;

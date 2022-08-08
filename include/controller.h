@@ -136,7 +136,6 @@ class ArmController
 	double play_time_;
 	double hz_;
 	double control_start_time_;
-	Matrix6d external_wrench_error;
 
 	std::string control_mode_;
 	bool is_mode_changed_;

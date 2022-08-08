@@ -498,7 +498,7 @@ void ArmController::readData(const Vector7d &position, const Vector7d &velocity,
 	for (size_t i = 0; i < 6; i++)
 	{
 		F_ext_old = F_ext_new;
-		if (abs(ee_force(i)) < 10e5 && abs(ee_force(i) > 10e-3)) F_ext_new(i) = -(ee_force(i) - external_wrench_error(i));
+		if (abs(ee_force(i)) < 10e5 && abs(ee_force(i) > 10e-3)) F_ext_new(i) = -ee_force(i);
 	}
 }
 // void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &torque, const Vector7d &coriolis){
