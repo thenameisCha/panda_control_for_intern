@@ -50,6 +50,7 @@ class ArmController
 	Matrix3d rotation_;
 	Vector3d rotation_in_vector;
 	Vector6d x_dot_; // 6D (linear + angular)
+	Vector6d x_ddot_;
 	Vector6d F_ext_new; // current F_ext
 	Vector6d F_ext_old; // previous F_ext
 
@@ -142,6 +143,8 @@ class ArmController
 
 	Matrix6d Kx, Dx,Ix, Kp, Kd, Ki; //ETank mode parameters
 	Matrix7d kp, kv, ki, joint_damping;	//Home mode parameters
+	Vector6d F_ext_Error;
+	int is_wrench_modified;
 
 	// for robot model construction
 	Math::Vector3d com_position_[DOF];
@@ -178,8 +181,10 @@ private:
 	void SGA();
 
 public:
-	void readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &coriolis);
-	void readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &coriolis, const Vector6d &ee_force);	void readData(const Vector7d &position, const Vector7d &velocity);
+	void readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &ext_torque);
+	void readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &coriolis, const Vector6d &ee_force);	
+	void readData(const Vector7d &position, const Vector7d &velocity);
+	;
 	void readGravityData(const Vector7d &gravity);
 	const Vector7d & getPositionInput();
 	const Vector7d & getTorqueInput(); // return tau_input
@@ -187,7 +192,7 @@ public:
 
 public:
 		ArmController(double hz, franka::Model &model) :
-		tick_(0), play_time_(0.0), hz_(hz), control_mode_("none"), is_mode_changed_(false), model_interface_(model)
+		tick_(0), play_time_(0.0), hz_(hz), control_mode_("none"), is_mode_changed_(true), model_interface_(model), is_wrench_modified(0)
 	{
 			initDimension(); initModel(); initFile();
 	}
@@ -205,10 +210,10 @@ public:
 	void readCurrentTime(double time) { play_time_ = time; };
 private:
 	ofstream debug_file_;
-	constexpr static int NUM_HW_PLOT{1};
+	constexpr static int NUM_HW_PLOT{2};
 	ofstream hw_plot_files_[NUM_HW_PLOT];
 	const string hw_plot_file_names_[NUM_HW_PLOT]
-	{"ETank_data"};					// 10 11
+	{"ETank_data", "Power_data"};					// 10 11
 
 	void record(int file_number, double duration);
 	void record(double duration);

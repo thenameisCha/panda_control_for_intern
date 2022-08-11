@@ -28,9 +28,6 @@ bool running = true;
 ArmController *ac_ptr;
 std::mutex control_mode_mutex;
 
-int ind = 0;
-Eigen::Matrix<double, 6, 1> sum;
-
 void inputCollector()
 {
   while(running)
@@ -69,12 +66,55 @@ int main()
   if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &thread_param) != 0) {
     std::cout << "error!";
   }
+  /*
+  const std::array< double, 7 > &lower_torque_thresholds_acceleration, 
+  const std::array< double, 7 > &upper_torque_thresholds_acceleration, 
+  const std::array< double, 7 > &lower_torque_thresholds_nominal, 
+  const std::array< double, 7 > &upper_torque_thresholds_nominal, 
+  const std::array< double, 6 > &lower_force_thresholds_acceleration, 
+  const std::array< double, 6 > &upper_force_thresholds_acceleration, 
+  const std::array< double, 6 > &lower_force_thresholds_nominal, 
+  const std::array< double, 6 > &upper_force_thresholds_nominal
+  */
+  // robot.setCollisionBehavior(
+  //     {{20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0}}, {{20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0}},
+  //     {{10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0}}, {{10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0}},
+  //     {{20.0, 20.0, 20.0, 20.0, 20.0, 20.0}}, {{20.0, 20.0, 20.0, 20.0, 20.0, 20.0}},
+  //     {{10.0, 10.0, 10.0, 10.0, 10.0, 10.0}}, {{10.0, 10.0, 10.0, 10.0, 10.0, 10.0}});
+
+
+  /////////////////////// Force limit setting //////////////////////////////////
+  // Default
+  // const double force_thresholds_acceleration = 20.0;
+  // const double force_thresholds_nominal = 10.0;
+  
+  // Force * 4
+  const double force_thresholds_acceleration = 30.0;
+  const double force_thresholds_nominal = 40.0;
+  //////////////////////////////////////////////////////////////////////////////
+
+  const std::array<double, 6> force_thresholds_accelerations{{
+    force_thresholds_acceleration,
+    force_thresholds_acceleration,
+    force_thresholds_acceleration,
+    force_thresholds_acceleration,
+    force_thresholds_acceleration,
+    force_thresholds_acceleration}};
+
+  const std::array<double, 6> force_thresholds_nominals{{
+    force_thresholds_nominal,
+    force_thresholds_nominal,
+    force_thresholds_nominal,
+    force_thresholds_nominal,
+    force_thresholds_nominal,
+    force_thresholds_nominal}};
 
   robot.setCollisionBehavior(
       {{20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0}}, {{20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0}},
       {{10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0}}, {{10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0}},
-      {{20.0, 20.0, 20.0, 20.0, 20.0, 20.0}}, {{20.0, 20.0, 20.0, 20.0, 20.0, 20.0}},
-      {{10.0, 10.0, 10.0, 10.0, 10.0, 10.0}}, {{10.0, 10.0, 10.0, 10.0, 10.0, 10.0}});
+      force_thresholds_accelerations, force_thresholds_accelerations,
+      force_thresholds_nominals, force_thresholds_nominals);
+
   robot.setJointImpedance({{3000, 3000, 3000, 2500, 2500, 2000, 2000}});
   robot.setCartesianImpedance({{3000, 3000, 3000, 300, 300, 300}});
 
@@ -88,7 +128,6 @@ int main()
   std::cin.ignore(100,'\n');
   robot.control(motion_generator);
   std::cout << "Finished moving to initial joint configuration." << std::endl;
-
   usleep(500000);
 
   const double hz = 1000.;
@@ -96,6 +135,16 @@ int main()
   ArmController ac(hz, model);
   double current_time = 0.0;
   ac_ptr = &ac;
+
+  // TEST WITH JOINT SPACE TORQUE
+  franka::RobotState initial_state = robot.readOnce();
+  Eigen::VectorXd initial_tau_ext(7), tau_error_integral(7), tau_ext(7);
+  // Bias torque sensor
+  std::array<double, 7> gravity_array = model.gravity(initial_state);
+  Eigen::Map<Eigen::Matrix<double, 7, 1>> initial_tau_measured(initial_state.tau_J.data());
+  Eigen::Map<Eigen::Matrix<double, 7, 1>> initial_gravity(gravity_array.data());
+  initial_tau_ext = initial_tau_measured - initial_gravity;
+  // --- TEST END ---
 
   std::thread input_thread(inputCollector);
 
@@ -114,25 +163,19 @@ int main()
     Eigen::Map<const Eigen::Matrix<double, 7, 1> > dq(robot_state.dq.data());
     Eigen::Map<const Eigen::Matrix<double, 6, 1> > O_F_Ext_hat_K(robot_state.O_F_ext_hat_K.data());
 
+    //TEST WITH JOINT SPACE TORQUE
+    Eigen::Map<const Eigen::Matrix<double, 7, 1>> tau_measured(robot_state.tau_J.data());
+    Eigen::Map<const Eigen::Matrix<double, 7, 1>> tau_ext_hat(robot_state.tau_ext_hat_filtered.data());
+    Eigen::Map<const Eigen::Matrix<double, 7, 1>> gravity(gravity_array.data());
+    tau_ext << tau_measured - gravity - initial_tau_ext;
+    // --- TEST END ---
+
     // zero-configure exernal wrench
-    if (ind < 10){
-      std::cout << "External Wrench Zero configuring" << std::endl;
-      sum += O_F_Ext_hat_K;
-      ind++;
-      Eigen::Matrix<double, 7, 1> dummy;
-      dummy.setZero();
-      std::array<double, 7> tau_d_array{};
-      Eigen::Matrix<double, 7, 1>::Map(&tau_d_array[0], 7) = dummy;
-      return tau_d_array;
-    }
-    else if (ind >= 10){
-      if (ind == 10){
-        sum = sum / 10;
-        std::cout << "External Wrench Zero Configured" << std::endl;
-        std::cout << "Wrench Error :\t" << std::setprecision(3) << sum.transpose() << std::endl;
-      }
+  
       control_mode_mutex.lock();
-      ac.readData(q,dq,coriolis, O_F_Ext_hat_K - sum);
+
+      ac.readData(q,dq,coriolis, O_F_Ext_hat_K);
+      //ac.readData(q,dq,tau_ext);
       if (is_first) {
         ac.initPosition(robot_state);
         is_first = false;
@@ -148,9 +191,7 @@ int main()
       // franka::Torques output(tau_d_array);
       // return output;
       return tau_d_array;
-    }
-  };
-
+    };
   try {
     // start real-time control loop
     std::cout << "WARNING: Collision thresholds are set to high values. "

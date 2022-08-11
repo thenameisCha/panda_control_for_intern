@@ -9,18 +9,21 @@
 #include <cmath>
 #define TANK_INITIAL_E 12 //Set initial tank energy level as 12J
 #define TANK_E_UPPER_LIMIT 13
-#define TANK_E_LOWER_LIMIT 0
+#define TANK_E_LOWER_LIMIT 10
 #define TANK_E_SMOOTHING 0.5
-#define PORT_POWER_UPPER_LIMIT_2 0.1
-#define PORT_POWER_LOWER_LIMIT_2 -0.1
-#define PORT_POWER_UPPER_LIMIT_1 0.1
-#define PORT_POWER_LOWER_LIMIT_1 -0.1
-#define PORT_POWER_UPPER_LIMIT_0 0.1
-#define PORT_POWER_LOWER_LIMIT_0 -0.1
-#define TANK_POWER_UPPER_LIMIT 0.1
-#define TANK_POWER_LOWER_LIMIT -0.1
-#define S_UR_MAX 0.05
+#define TANK_E_EPSILON 0.02
+#define PORT_POWER_UPPER_LIMIT_2 0.6
+#define PORT_POWER_LOWER_LIMIT_2 -0.6
+#define PORT_POWER_UPPER_LIMIT_1 0.2
+#define PORT_POWER_LOWER_LIMIT_1 -0.2
+#define PORT_POWER_UPPER_LIMIT_0 0.2
+#define PORT_POWER_LOWER_LIMIT_0 -0.2
+#define TANK_POWER_UPPER_LIMIT 0.7
+#define TANK_POWER_LOWER_LIMIT -0.7
+#define S_UR_MAX 0.1
+#define S_UR_SMOOTHING 0.02
 #define DESIRED_FORCE 10
+
 
 
 void ArmController::compute()
@@ -33,7 +36,8 @@ void ArmController::compute()
 	m_ = model_interface_.getMassMatrix(q_);
 	m_inverse_ = m_.inverse();
 	j_v_ = j_.block < 3, DOF>(0, 0);
-	lambda_ = j_inverse_.transpose() * m_ * j_inverse_;
+	lambda_ = (j_ * m_inverse_ * j_.transpose()).inverse();
+	j_inverse_ = m_inverse_ * j_.transpose() * lambda_; // Advanced robot manipulation pg 84
 	
 	//calculate current values
 		//task space
@@ -50,10 +54,16 @@ void ArmController::compute()
 			//Velocity
 				//6d
 	x_dot_ = j_ * q_dot_;
+			//Acceleration
+	x_ddot_ = j_ * q_ddot_;
+
+	//Modify F_Ext
+	F_ext_new += lambda_ * x_ddot_;
 	
 	if (is_mode_changed_) mode_is_changed();
 	move();
 	printState();
+	record(20.0);
 
 	tick_++;
 	//play_time_ = tick_ / hz_;	// second
@@ -90,7 +100,6 @@ void ArmController::ETank(double duration){
 	update_gamma();	
 	update_tank();
 	update_torque_input();
-	record(duration);
 }
 
 void ArmController::Test(){
@@ -128,17 +137,24 @@ void ArmController::initialize_ETank_controller(){
 	Kx = scale * Matrix6d::Identity(); //orientation 에 해당하는 gain must be small ~ 1.0. linear gain ~100
 	Dx = scale * Matrix6d::Identity();
 	Ix = 2.3 * Matrix6d::Identity();
-	Kp = 10 * scale2 * Matrix6d::Identity();
-	Kd = 0.2*scale2 * Matrix6d::Identity();
-	Ki = 150 * scale2 * Matrix6d::Identity();
-	Kx.topLeftCorner(3,3) = Kx.topLeftCorner(3,3) * 450; //450
+	Kp =  scale2 * Matrix6d::Identity();
+	Kp.topLeftCorner(3,3) = Kp.topLeftCorner(3,3) * 50;
+	Kp.bottomRightCorner(3,3) = Kp.bottomRightCorner(3,3) * 20;
+	Kd = 0*scale2 * Matrix6d::Identity();
+	Ki = 0 * scale2 * Matrix6d::Identity();
+	Ki.topLeftCorner(3,3) = Ki.topLeftCorner(3,3) * 10;
+	Ki.bottomRightCorner(3,3) = Ki.bottomRightCorner(3,3) * 1;
+
+	Kx.topLeftCorner(3,3) = Kx.topLeftCorner(3,3) * 1000; //450
 	Dx.topLeftCorner(3,3) = Dx.topLeftCorner(3,3) * 80;  //40
 	Ix.topLeftCorner(3,3) = Ix.topLeftCorner(3,3) * 110;  //110
 	Kx.bottomRightCorner(3,3) = Kx.bottomRightCorner(3,3) * 100;
 	Dx.bottomRightCorner(3,3) = Dx.bottomRightCorner(3,3) * 10;
 	joint_damping = scale3 * Matrix7d::Identity();
+	F_ext_Error.setZero();
 	
 	is_mode_changed_ = false;
+	is_wrench_modified = 0;
 	control_start_time_ = play_time_;
 	x_init_12d = x_12d_;
 	x_init_6d = x_6d_;
@@ -152,7 +168,7 @@ void ArmController::initialize_ETank_controller(){
 	x_target_6d(2) -= 0.2;
 	rotation_target = rotation_init_;
 	rotation_target_vector = rotation_init_in_vector;
-	// x_desired_dot_f << 0, 0, -0.05, 0, 0, 0; // FOR TEST!!!!
+	x_desired_dot_f << 0.0, 0.0, -0.04, 0, 0, 0; // FOR TEST!!!!
 }
 
 void ArmController::initialize_Force_Test(){
@@ -178,8 +194,10 @@ void ArmController::initialize_Force_Test(){
 	Kx.bottomRightCorner(3,3) = Kx.bottomRightCorner(3,3) * 10;
 	Dx.bottomRightCorner(3,3) = Dx.bottomRightCorner(3,3) * 0;
 	joint_damping = scale3 * Matrix7d::Identity();
+	F_ext_Error.setZero();
 	
 	is_mode_changed_ = false;
+	is_wrench_modified = 0;
 	control_start_time_ = play_time_;
 	x_init_12d = x_12d_;
 	x_init_6d = x_6d_;
@@ -204,24 +222,23 @@ void ArmController::calculate_desired_Home(double duration){
 
 void ArmController::calculate_desired_ETank(double duration){
 //x_desired calculated
-	if (play_time_ == control_start_time_) x_desired_6d_calculated = x_init_6d;
-	else x_desired_6d_calculated += x_desired_dot_ / hz_;
-	x_desired_linear_ = x_desired_6d_calculated.segment<3>(0);
-	x_desired_angular = x_desired_6d_calculated.segment<3>(3);
-	//TEST!!!! CONSTANT DESIRED VELOCITY
-	x_desired_dot_ = x_desired_dot_f;
-
-	//rotation_desired calculated
-	Eigen::Matrix3d skew;
-	skew << 0, -x_desired_angular[5], x_desired_angular[4],
-						x_desired_angular[5], 0, -x_desired_angular[3],
-						-x_desired_angular[4], x_desired_angular[3], 0;
-	rotation_desired_ = skew.exp();
+	if (play_time_ == control_start_time_) {
+		x_desired_linear_ = x_init_linear;
+		rotation_desired_ = rotation_init_;
+	}
+	else {
+		x_desired_linear_ += x_desired_dot_.segment<3>(0) / hz_; // xdesired(t+dt) = xdesired(t) + dt * xdesired_dot(t)
+	}
 	x_desired_12d << x_desired_linear_, rotation_desired_.block<3,1>(0,0), rotation_desired_.block<3,1>(0,1), rotation_desired_.block<3,1>(0,2);
-	x_desired_6d = x_desired_6d_calculated;
-	x_error_ = x_desired_6d - x_6d_;
+
+	//Calculate Error
+	Vector3d x_error_linear = x_desired_linear_ - x_linear_;
+	Vector3d x_error_angular = -DyrosMath::getPhi(rotation_, rotation_desired_);
+	x_error_ << x_error_linear, x_error_angular;
+	// x_error_ = x_desired_6d - x_6d_;
 	x_error_dot_ = x_desired_dot_ - x_dot_;
 	x_error_integral += x_error_ / hz_;
+	x_desired_dot_ = x_desired_dot_f;
 }
 
 void ArmController::calculate_desired_Test(){
@@ -244,10 +261,8 @@ void ArmController::calculate_desired_Test(){
 void ArmController::update_port_power(){
 //Calculate Port Individual Power
 	port_power[0] = x_dot_.dot(-F_F);
-	port_power[1] = x_desired_dot_.dot(F_F);
+	port_power[1] = x_desired_dot_.dot(F_F); 
 	port_power[2] = x_desired_dot_.dot(F_ext_new);
-	float S_ur_ = 0.5 * x_error_.transpose() * Kx * x_error_ + 0.5 * (x_error_dot_.transpose() * lambda_).dot(x_error_dot_);
-	if (S_ur_ <= 0.1)  S_ur = S_ur_;
 }
 
 void ArmController::update_gamma(){
@@ -256,18 +271,21 @@ void ArmController::update_gamma(){
 	tank_power_limit();
 	tank_energy_limit();
 	// x_desired_dot_control = (port_gamma[1]+port_gamma[2])/2 * x_desired_dot_; //average mode
-	x_desired_dot_control = min(port_gamma[1], port_gamma[2]) * x_desired_dot_; //conservative mode
+	// x_desired_dot_control = min(port_gamma[1], port_gamma[2]) * x_desired_dot_; //conservative mode
+	x_desired_dot_control = port_gamma[1] *port_gamma[2] * x_desired_dot_; //multiply mode
 	x_dot_control = port_gamma[0] * x_dot_;
 	x_desired_dot_ = x_desired_dot_control;
+	x_error_dot_control = x_desired_dot_control- x_dot_control;
 }
 
 void ArmController::update_tank(){
 	//Calculate Tank State
-	tank_power = port_power[0] + port_power[1] + port_power[2];
+	tank_power = port_power[0] + port_power[1] + port_power[2]; // -> port_power[1] < 0 when f_ext too big, port_power[2] < 0, port_power[0] = 0
 	tank_state = sqrt(2*tank_E);
 	float state_dot = 1/tank_state * port_gamma.dot(port_power);
 	tank_state += state_dot/hz_;
 	tank_E = 0.5 * pow(tank_state,2);
+	S_ur = 0.5 * x_error_.transpose() * Kx * x_error_ + 0.5 * ((x_desired_dot_ - x_dot_).transpose() * lambda_).dot((x_desired_dot_ - x_dot_));
 }
 
 void ArmController::update_torque_input(){
@@ -277,16 +295,13 @@ void ArmController::update_torque_input(){
 	}
 	else if (control_mode_ == "ETank"){
 	//Calculate impedance control input
-	x_error_dot_control = x_desired_dot_control- x_dot_control;
 	tau_imp = j_.transpose() * (Kx*x_error_ + Dx*(-x_dot_control));//+ Ix*x_error_integral); // This method's gamma does not affect x_error or force control
 	
 	//Calculate F_F
-	F_ext_dot = (F_ext_new-F_ext_old)*hz_;
+	if (tick_ % 1000 == 0) F_integral.setZero();
 	F_integral += (F_ext_new-F_desired)/hz_;
-	if (F_ext_new[2] >= 1) F_F =  Kp*(F_ext_new-F_desired) + Kd*F_ext_dot + Ki*(F_integral); // Derivative term used only when sensor is passed through LPF
-	else F_F.setZero();
+	F_F =  Kp*(F_ext_new-F_desired) + Ki*(F_integral);
 	tau_force = j_.transpose() * F_F;
-	
 	torque_input = g_+ tau_imp + tau_force;// - joint_damping * q_dot_;
 	}
 	else if (control_mode_ == "Test"){
@@ -300,33 +315,57 @@ void ArmController::indi_power_limit(){
 	
 		// individual port power limit
 	float pt_low, pt_upper;
-	if (S_ur <= S_UR_MAX) {
+	if (S_ur <= S_UR_MAX - S_UR_SMOOTHING) {
 		pt_low = PORT_POWER_LOWER_LIMIT_2;
 		pt_upper = PORT_POWER_UPPER_LIMIT_2;
+	}
+	else if(S_ur <= S_UR_MAX && S_ur >= S_UR_MAX - S_UR_SMOOTHING){
+		pt_low = 0.5 * PORT_POWER_LOWER_LIMIT_2 * (1-cos((S_UR_MAX - S_ur) * M_PI / S_UR_SMOOTHING));
+		pt_upper = 0.5 * PORT_POWER_UPPER_LIMIT_2 * (1-cos((S_UR_MAX - S_ur) * M_PI / S_UR_SMOOTHING));
 	}
 	else {
 		pt_low = 0;
 		pt_upper = 0;
 	}
+	// FIRST METHOD
+	// if (port_gamma[2] * port_power[2] > PORT_POWER_UPPER_LIMIT_2 && PORT_POWER_UPPER_LIMIT_2 >= 0){
+	// 	port_gamma[2] =  pt_upper / port_power[2];
+	// }
+	// else if (port_gamma[2] * port_power[2] < PORT_POWER_LOWER_LIMIT_2 && PORT_POWER_LOWER_LIMIT_2 <= 0){
+	// 	port_gamma[2] = pt_low / port_power[2];
+	// }
+	// if (port_gamma[1] * port_power[1] > PORT_POWER_UPPER_LIMIT_1 && PORT_POWER_UPPER_LIMIT_1 >= 0){
+	// 	port_gamma[1] = pt_upper / port_power[1];
+	// }
+	// else if (port_gamma[1] * port_power[1] < PORT_POWER_LOWER_LIMIT_1 && PORT_POWER_LOWER_LIMIT_1 <= 0){
+	// 	port_gamma[1] =pt_low / port_power[1];
+	// }
+	// if (port_gamma[0] * port_power[0] > PORT_POWER_UPPER_LIMIT_0 && PORT_POWER_UPPER_LIMIT_0 >= 0){
+	// 	port_gamma[0] = pt_upper / port_power[0];
+	// }
+	// else if (port_gamma[0] * port_power[0] < PORT_POWER_LOWER_LIMIT_0 && PORT_POWER_LOWER_LIMIT_0 <= 0){
+	// 	port_gamma[0] =  pt_low / port_power[0];
+	// }
+	
+	// SECOND METHOD
 	if (port_gamma[2] * port_power[2] > PORT_POWER_UPPER_LIMIT_2 && PORT_POWER_UPPER_LIMIT_2 >= 0){
-		port_gamma[2] = pt_upper / port_power[2];
+		port_gamma[2] =  0;
 	}
 	else if (port_gamma[2] * port_power[2] < PORT_POWER_LOWER_LIMIT_2 && PORT_POWER_LOWER_LIMIT_2 <= 0){
-		port_gamma[2] = pt_low / port_power[2];
+		port_gamma[2] =0;
 	}
 	if (port_gamma[1] * port_power[1] > PORT_POWER_UPPER_LIMIT_1 && PORT_POWER_UPPER_LIMIT_1 >= 0){
-		port_gamma[1] = PORT_POWER_UPPER_LIMIT_1 / port_power[1];
+		port_gamma[1] = 0;
 	}
 	else if (port_gamma[1] * port_power[1] < PORT_POWER_LOWER_LIMIT_1 && PORT_POWER_LOWER_LIMIT_1 <= 0){
-		port_gamma[1] = PORT_POWER_LOWER_LIMIT_1 / port_power[1];
+		port_gamma[1] =0;
 	}
 	if (port_gamma[0] * port_power[0] > PORT_POWER_UPPER_LIMIT_0 && PORT_POWER_UPPER_LIMIT_0 >= 0){
-		port_gamma[0] = PORT_POWER_UPPER_LIMIT_1 / port_power[0];
+		port_gamma[0] = 0;
 	}
 	else if (port_gamma[0] * port_power[0] < PORT_POWER_LOWER_LIMIT_0 && PORT_POWER_LOWER_LIMIT_0 <= 0){
-		port_gamma[0] = PORT_POWER_LOWER_LIMIT_1 / port_power[0];
+		port_gamma[0] =  0;
 	}
-	
 }
 
 void ArmController::tank_power_limit(){
@@ -362,11 +401,11 @@ void ArmController::SGA(){
 void ArmController::tank_energy_limit(){
 	for (int i = 0; i < 3; i++){
 		if (tank_E >= TANK_E_UPPER_LIMIT && port_power[i] >= 0) port_gamma[i] = 0;
-		else if (tank_E >= TANK_E_UPPER_LIMIT - TANK_E_SMOOTHING && tank_E <= TANK_E_UPPER_LIMIT && port_power[i] >= 0)
-			port_gamma[i] = 0.5 * (1-cos((TANK_E_UPPER_LIMIT - tank_E) * M_PI / TANK_E_SMOOTHING));
+		else if (tank_E >= TANK_E_UPPER_LIMIT - TANK_E_SMOOTHING && tank_E <= TANK_E_UPPER_LIMIT && port_power[i] >= -TANK_E_EPSILON)
+			port_gamma[i] = 0.5 * (1-cos((TANK_E_UPPER_LIMIT - tank_E) * M_PI /  TANK_E_SMOOTHING)) * port_gamma[i];
 		if (tank_E <= TANK_E_LOWER_LIMIT && port_power[i] <= 0) port_gamma[i] = 0;
-		else if (tank_E <= TANK_E_UPPER_LIMIT + TANK_E_SMOOTHING && tank_E >= TANK_E_UPPER_LIMIT && port_power[i] <= 0)
-			port_gamma[i] = 0.5 * (1-cos((-TANK_E_LOWER_LIMIT + tank_E) * M_PI / TANK_E_SMOOTHING));
+		else if (tank_E <= TANK_E_LOWER_LIMIT + TANK_E_SMOOTHING && tank_E >= TANK_E_LOWER_LIMIT && port_power[i] <= TANK_E_EPSILON)
+			port_gamma[i] = 0.5 * (1-cos((-TANK_E_LOWER_LIMIT + tank_E) * M_PI / TANK_E_SMOOTHING)) * port_gamma[i];
 	}
 }
 
@@ -375,9 +414,13 @@ void ArmController::tank_energy_limit(){
 
 void ArmController::setMode(const std::string & mode)
 {
-	is_mode_changed_ = true;
-	control_mode_ = mode;
-	cout << "Current mode (changed) : " << mode << endl;
+	
+	if (control_mode_ != mode) {
+		control_mode_ = mode;
+		is_mode_changed_ = true;
+		cout << "Is already " << control_mode_ << " mode" << endl;
+	}
+	cout << "Current mode : " << mode << endl;
 }
 void ArmController::initDimension()
 {
@@ -470,15 +513,6 @@ void ArmController::initFile()
 	}
 }
 
-void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &coriolis)
-{
-	for (size_t i = 0; i < dof_; i++)
-	{
-		q_(i) = position(i);
-		q_dot_(i) = velocity(i);
-		g_(i) = coriolis(i);
-	}
-}
 void ArmController::readData(const Vector7d &position, const Vector7d &velocity)
 {
 	for (size_t i = 0; i < dof_; i++)
@@ -489,27 +523,46 @@ void ArmController::readData(const Vector7d &position, const Vector7d &velocity)
 	}
 }
 void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &coriolis, const Vector6d &ee_force){
+	if (is_wrench_modified < 10){
+		for (size_t i = 0; i < 6; i++)
+		{
+			F_ext_Error(i) -= ee_force(i);
+		}
+		is_wrench_modified++;
+	}
 	for (size_t i = 0; i < dof_; i++)
 	{
 		q_(i) = position(i);
 		q_dot_(i) = velocity(i);
-		g_(i) = 0;//coriolis(i); 
+		g_(i) = coriolis(i); 
 	}
 	for (size_t i = 0; i < 6; i++)
 	{
 		F_ext_old = F_ext_new;
-		if (abs(ee_force(i)) < 10e5 && abs(ee_force(i) > 10e-3)) F_ext_new(i) = -ee_force(i);
+		if (abs(ee_force(i)) < 10e5 && abs(ee_force(i)) > 10e-3) F_ext_new(i) = -ee_force(i) - F_ext_Error(i)/10;
+	}
+	//if (abs(F_ext_new(2)) >= 6) 
+	F_desired << 0, 0, DESIRED_FORCE, 0, 0, 0;
+	//else  F_desired = F_ext_new;
+}
+// TEST FOR JOINT TORQUE
+void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &ext_torque){
+	Vector6d f_ext;
+	f_ext = j_inverse_.transpose() * (ext_torque - torque_input);
+	for (size_t i = 0; i < dof_; i++)
+	{	
+		double q_dot_old = q_dot_(i);
+		q_(i) = position(i);
+		q_dot_(i) = velocity(i);
+		q_ddot_(i) = (q_dot_(i) - q_dot_old) * hz_;
+		torque_(i) = 0;
+	}
+	for (size_t i = 0; i < 6; i++){
+		F_ext_old(i) = F_ext_new(i);
+		F_ext_new(i) = f_ext(i);
 	}
 }
-// void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &torque, const Vector7d &coriolis){
-// 	for (size_t i = 0; i < dof_; i++)
-// 	{
-// 		q_(i) = position(i);
-// 		q_dot_(i) = velocity(i);
-// 		torque_(i) = torque(i);
-// 		g_(i) = coriolis(i);
-// 	}
-// }
+// --- TEST END ---
 
 const Vector7d & ArmController::getPositionInput()
 {
@@ -557,34 +610,52 @@ void ArmController::printState()
 
 		} 
 		if (control_mode_=="ETank"){
-			//cout << "x dot desired times gamma :\t" << endl;
-			//cout << std::fixed << std::setprecision(3) << x_desired_dot_.transpose() << endl;
+			// cout << "x dot desired times gamma :\t" << endl;
+			// cout << std::fixed << std::setprecision(3) << x_desired_dot_.transpose() << endl;
 			cout << "x dot current :\t" << endl;
 			cout << std::fixed << std::setprecision(3) << x_dot_.transpose() << endl;
-			//cout << "tank E :\t" << endl;
-			//cout << std::fixed << std::setprecision(3) << tank_E << endl;
+			// cout << "x desired :\t" << endl;
+			// cout << std::fixed << std::setprecision(3) << x_desired_6d.transpose() << endl;
+			// cout << "x current :\t" << endl;
+			// cout << std::fixed << std::setprecision(3) << x_6d_.transpose() << endl;
+			// cout << "x init :\t" << endl;
+			// cout << std::fixed << std::setprecision(3) << x_init_6d.transpose() << endl;
+			// cout << "x error :\t" << endl;
+			// cout << std::fixed << std::setprecision(3) << x_error_.transpose() << endl;
+			cout << "tank E :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << tank_E << endl;
 			//cout << "port power :\t" << endl;
 			//cout << std::fixed << std::setprecision(3) << port_power.transpose() << endl;
-			//cout << "port gamma :\t" << endl;
-			//cout << std::fixed << std::setprecision(3) << port_gamma.transpose() << endl;
-			//cout << "force sensor input: \t" << endl;
-			//cout << std::fixed << std::setprecision(3) << F_ext_new.transpose() << endl;	
-			//cout << "S_ur :\t" << endl;
-			//cout << std::fixed << std::setprecision(3) << S_ur << endl;		
+			cout << "port gamma :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << port_gamma.transpose() << endl;
+			cout << "Torque input :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << torque_input.transpose() << endl;
+			cout << "Tau imp :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << tau_imp.transpose() << endl;
+			cout << "F_F: \t" << endl;
+			cout << std::fixed << std::setprecision(3) << F_F.transpose() << endl;	
+			cout << "f_ext: \t" << endl;
+			cout << std::fixed << std::setprecision(3) << F_ext_new.transpose() << endl;	
+			//cout << "imp f_control: \t" << endl;
+			//cout << std::fixed << std::setprecision(3) << (Kx*x_error_ + Dx*(-x_dot_control)).transpose() << endl;
+			cout << "f_desired: \t" << endl;
+			cout << std::fixed << std::setprecision(3) << F_desired.transpose() << endl;	
+			// cout << "f_ext_Error: \t" << endl;
+			// cout << std::fixed << std::setprecision(3) << F_ext_Error.transpose() << endl;	
+			cout << "S_ur :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << S_ur << endl;		
 			//cout << "playtime :\t" << endl;
 			//cout << std::fixed << std::setprecision(3) << play_time_ << endl;
 		}
 		if (control_mode_ == "Test"){
 			cout << "x dot current :\t" << endl;
 			cout << std::fixed << std::setprecision(3) << x_dot_.transpose() << endl;
-			cout << "x dot desired :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << x_desired_dot_.transpose() << endl;
+			cout << "x error :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << (x_desired_6d - x_6d_).transpose() << endl;
 			cout << "F external :\t" << endl;
 			cout << std::fixed << std::setprecision(3) << F_ext_new.transpose() << endl;
 			cout << "Torque input :\t" << endl;
 			cout << std::fixed << std::setprecision(3) << torque_input.transpose() << endl;
-			cout << "Force input :\t" << endl;
-			cout << std::fixed << std::setprecision(3) <<  (Kx*x_error_ + Dx*(-x_error_dot_)).transpose() << endl;
 		}
 	}
 }
@@ -603,10 +674,14 @@ void ArmController::record(double duration)
 {
 	if (play_time_ < control_start_time_ + duration + 1.0)
 	{
-		hw_plot_files_[0] << std::setprecision(3) << play_time_ << " " << x_desired_dot_control[2]  << " "
-		<< x_dot_[2] << " " << min(port_gamma[1], port_gamma[2])  << " "<< S_ur << 
+		hw_plot_files_[0] << play_time_ << " " << x_desired_dot_control(2)  << " "
+		<< x_dot_(2) << " " << port_gamma(0) << " " << port_gamma(1) * port_gamma(2)  << " "<< S_ur << 
 		endl;
-		
+	}
+	if (play_time_ < control_start_time_ + duration + 1.0)
+	{
+		hw_plot_files_[1] << play_time_ << " " << port_power.transpose() << " " << tank_E <<
+		endl;
 	}
 }
 
