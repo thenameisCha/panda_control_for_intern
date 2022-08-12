@@ -210,10 +210,10 @@ public:
 	void readCurrentTime(double time) { play_time_ = time; };
 private:
 	ofstream debug_file_;
-	constexpr static int NUM_HW_PLOT{2};
+	constexpr static int NUM_HW_PLOT{3};
 	ofstream hw_plot_files_[NUM_HW_PLOT];
 	const string hw_plot_file_names_[NUM_HW_PLOT]
-	{"ETank_data", "Power_data"};					// 10 11
+	{"ETank_data", "Power_data", "Position_data"};					// 10 11
 
 	void record(int file_number, double duration);
 	void record(double duration);

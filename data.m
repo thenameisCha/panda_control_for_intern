@@ -13,15 +13,19 @@ close all; clear all; clc;
     xlabel("play time, [s]");
     ylabel("task space Z velocity, [m/s]");
     title("ETank applied");
+    xlim([0,10]);
 
     figure(2);
+    ylim([-0.2, 1.2]);
     plot(B(:,1), B(:,4));
     hold on;
     plot(B(:,1), B(:,5));
+    ylim([-0.2 1.2])
     xlabel("play time, [s]");
     ylabel("Gamma");
     legend("x_(dot) gamma", "x_(desired, dot) gamma");
     title("ETank applied");
+    
 
     figure(3)
     plot(B(:,1), B(:,6));
@@ -51,3 +55,20 @@ close all; clear all; clc;
     xlabel("play time, [s]");
     ylabel("Tank Energy");
     title("ETank applied");
+    ylim([10,13]);
+    
+    fileID = fopen('build/Position_data.txt', 'r');
+    formatspec = '%f %f %f';
+    sizeA = [3, inf];
+    A = fscanf(fileID, formatspec, sizeA);
+    fclose(fileID);
+    A = A';
+    
+    figure(6);
+    plot(A(:,1), A(:, 2));
+    hold on;
+    plot(A(:,1), A(:, 3));
+    xlabel("play time, [s]");
+    ylabel("position [m]");
+    title("ETank applied");
+    legend("x desired", "x current");

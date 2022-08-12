@@ -8,23 +8,21 @@
 #include <iomanip>
 #include <cmath>
 #define TANK_INITIAL_E 12 //Set initial tank energy level as 12J
-#define TANK_E_UPPER_LIMIT 13
-#define TANK_E_LOWER_LIMIT 10
-#define TANK_E_SMOOTHING 0.5
+#define TANK_E_UPPER_LIMIT 20
+#define TANK_E_LOWER_LIMIT 5
+#define TANK_E_SMOOTHING 5
 #define TANK_E_EPSILON 0.02
-#define PORT_POWER_UPPER_LIMIT_2 0.6
-#define PORT_POWER_LOWER_LIMIT_2 -0.6
+#define PORT_POWER_UPPER_LIMIT_2 0.8
+#define PORT_POWER_LOWER_LIMIT_2 -0.8
 #define PORT_POWER_UPPER_LIMIT_1 0.2
 #define PORT_POWER_LOWER_LIMIT_1 -0.2
-#define PORT_POWER_UPPER_LIMIT_0 0.2
-#define PORT_POWER_LOWER_LIMIT_0 -0.2
-#define TANK_POWER_UPPER_LIMIT 0.7
-#define TANK_POWER_LOWER_LIMIT -0.7
-#define S_UR_MAX 0.1
+#define PORT_POWER_UPPER_LIMIT_0 0.3
+#define PORT_POWER_LOWER_LIMIT_0 -0.3
+#define TANK_POWER_UPPER_LIMIT 0.3 // F_ext differs by this 
+#define TANK_POWER_LOWER_LIMIT -0.3
+#define S_UR_MAX 0.5
 #define S_UR_SMOOTHING 0.02
 #define DESIRED_FORCE 10
-
-
 
 void ArmController::compute()
 {
@@ -63,7 +61,7 @@ void ArmController::compute()
 	if (is_mode_changed_) mode_is_changed();
 	move();
 	printState();
-	record(20.0);
+	record(30.0);
 
 	tick_++;
 	//play_time_ = tick_ / hz_;	// second
@@ -138,15 +136,15 @@ void ArmController::initialize_ETank_controller(){
 	Dx = scale * Matrix6d::Identity();
 	Ix = 2.3 * Matrix6d::Identity();
 	Kp =  scale2 * Matrix6d::Identity();
-	Kp.topLeftCorner(3,3) = Kp.topLeftCorner(3,3) * 50;
-	Kp.bottomRightCorner(3,3) = Kp.bottomRightCorner(3,3) * 20;
+	Kp.topLeftCorner(3,3) = Kp.topLeftCorner(3,3) * 30; // 50
+	Kp.bottomRightCorner(3,3) = Kp.bottomRightCorner(3,3) * 10; // 20
 	Kd = 0*scale2 * Matrix6d::Identity();
 	Ki = 0 * scale2 * Matrix6d::Identity();
 	Ki.topLeftCorner(3,3) = Ki.topLeftCorner(3,3) * 10;
 	Ki.bottomRightCorner(3,3) = Ki.bottomRightCorner(3,3) * 1;
 
-	Kx.topLeftCorner(3,3) = Kx.topLeftCorner(3,3) * 1000; //450
-	Dx.topLeftCorner(3,3) = Dx.topLeftCorner(3,3) * 80;  //40
+	Kx.topLeftCorner(3,3) = Kx.topLeftCorner(3,3) * 1000; //1000
+	Dx.topLeftCorner(3,3) = Dx.topLeftCorner(3,3) * 200;  //150 before 80
 	Ix.topLeftCorner(3,3) = Ix.topLeftCorner(3,3) * 110;  //110
 	Kx.bottomRightCorner(3,3) = Kx.bottomRightCorner(3,3) * 100;
 	Dx.bottomRightCorner(3,3) = Dx.bottomRightCorner(3,3) * 10;
@@ -314,58 +312,51 @@ void ArmController::update_torque_input(){
 void ArmController::indi_power_limit(){
 	
 		// individual port power limit
-	float pt_low, pt_upper;
-	if (S_ur <= S_UR_MAX - S_UR_SMOOTHING) {
-		pt_low = PORT_POWER_LOWER_LIMIT_2;
-		pt_upper = PORT_POWER_UPPER_LIMIT_2;
+			// FIRST METHOD
+	double pt_low[3], pt_upper[3];
+	double port_power_lower_limit[3] = {PORT_POWER_LOWER_LIMIT_0, PORT_POWER_LOWER_LIMIT_1, PORT_POWER_LOWER_LIMIT_2};
+	double port_power_upper_limit[3] = {PORT_POWER_UPPER_LIMIT_0, PORT_POWER_UPPER_LIMIT_1, PORT_POWER_UPPER_LIMIT_2};
+	for (int i = 0; i < 3; i++){
+		if (S_ur <= S_UR_MAX - S_UR_SMOOTHING) {
+			pt_low[i] = port_power_lower_limit[i];
+			pt_upper[i] = port_power_upper_limit[i];
+		}
+		else if(S_ur <= S_UR_MAX && S_ur >= S_UR_MAX - S_UR_SMOOTHING){
+			pt_low[i] = 0.5 *  port_power_lower_limit[i] * (1-cos((S_UR_MAX - S_ur) * M_PI / S_UR_SMOOTHING));
+			pt_upper[i] = 0.5 * port_power_upper_limit[i] * (1-cos((S_UR_MAX - S_ur) * M_PI / S_UR_SMOOTHING));
+		}
+		else {
+			pt_low[i] = 0;
+			pt_upper[i] = 0;
+		}
+
+		if (port_gamma[i] * port_power[i] > pt_upper[i] && port_power_upper_limit[i] >= 0){
+			port_gamma[i] =  pt_upper[i] / port_power[i];
+		}
+		else if (port_gamma[i] * port_power[i] < pt_low[i] && port_power_lower_limit[i] <= 0){
+			port_gamma[i] = pt_low[i] / port_power[i];
+		}
 	}
-	else if(S_ur <= S_UR_MAX && S_ur >= S_UR_MAX - S_UR_SMOOTHING){
-		pt_low = 0.5 * PORT_POWER_LOWER_LIMIT_2 * (1-cos((S_UR_MAX - S_ur) * M_PI / S_UR_SMOOTHING));
-		pt_upper = 0.5 * PORT_POWER_UPPER_LIMIT_2 * (1-cos((S_UR_MAX - S_ur) * M_PI / S_UR_SMOOTHING));
-	}
-	else {
-		pt_low = 0;
-		pt_upper = 0;
-	}
-	// FIRST METHOD
+
+		// SECOND METHOD
 	// if (port_gamma[2] * port_power[2] > PORT_POWER_UPPER_LIMIT_2 && PORT_POWER_UPPER_LIMIT_2 >= 0){
-	// 	port_gamma[2] =  pt_upper / port_power[2];
+	// 	port_gamma[2] =  0;
 	// }
 	// else if (port_gamma[2] * port_power[2] < PORT_POWER_LOWER_LIMIT_2 && PORT_POWER_LOWER_LIMIT_2 <= 0){
-	// 	port_gamma[2] = pt_low / port_power[2];
+	// 	port_gamma[2] =0;
 	// }
 	// if (port_gamma[1] * port_power[1] > PORT_POWER_UPPER_LIMIT_1 && PORT_POWER_UPPER_LIMIT_1 >= 0){
-	// 	port_gamma[1] = pt_upper / port_power[1];
+	// 	port_gamma[1] = 0;
 	// }
 	// else if (port_gamma[1] * port_power[1] < PORT_POWER_LOWER_LIMIT_1 && PORT_POWER_LOWER_LIMIT_1 <= 0){
-	// 	port_gamma[1] =pt_low / port_power[1];
+	// 	port_gamma[1] =0;
 	// }
 	// if (port_gamma[0] * port_power[0] > PORT_POWER_UPPER_LIMIT_0 && PORT_POWER_UPPER_LIMIT_0 >= 0){
-	// 	port_gamma[0] = pt_upper / port_power[0];
+	// 	port_gamma[0] = 0;
 	// }
 	// else if (port_gamma[0] * port_power[0] < PORT_POWER_LOWER_LIMIT_0 && PORT_POWER_LOWER_LIMIT_0 <= 0){
-	// 	port_gamma[0] =  pt_low / port_power[0];
+	// 	port_gamma[0] =  0;
 	// }
-	
-	// SECOND METHOD
-	if (port_gamma[2] * port_power[2] > PORT_POWER_UPPER_LIMIT_2 && PORT_POWER_UPPER_LIMIT_2 >= 0){
-		port_gamma[2] =  0;
-	}
-	else if (port_gamma[2] * port_power[2] < PORT_POWER_LOWER_LIMIT_2 && PORT_POWER_LOWER_LIMIT_2 <= 0){
-		port_gamma[2] =0;
-	}
-	if (port_gamma[1] * port_power[1] > PORT_POWER_UPPER_LIMIT_1 && PORT_POWER_UPPER_LIMIT_1 >= 0){
-		port_gamma[1] = 0;
-	}
-	else if (port_gamma[1] * port_power[1] < PORT_POWER_LOWER_LIMIT_1 && PORT_POWER_LOWER_LIMIT_1 <= 0){
-		port_gamma[1] =0;
-	}
-	if (port_gamma[0] * port_power[0] > PORT_POWER_UPPER_LIMIT_0 && PORT_POWER_UPPER_LIMIT_0 >= 0){
-		port_gamma[0] = 0;
-	}
-	else if (port_gamma[0] * port_power[0] < PORT_POWER_LOWER_LIMIT_0 && PORT_POWER_LOWER_LIMIT_0 <= 0){
-		port_gamma[0] =  0;
-	}
 }
 
 void ArmController::tank_power_limit(){
@@ -680,7 +671,12 @@ void ArmController::record(double duration)
 	}
 	if (play_time_ < control_start_time_ + duration + 1.0)
 	{
-		hw_plot_files_[1] << play_time_ << " " << port_power.transpose() << " " << tank_E <<
+		hw_plot_files_[1] << play_time_ << " " << port_power.transpose() << " " << tank_E << 
+		endl;
+	}
+	if (play_time_ < control_start_time_ + duration + 1.0)
+	{
+		hw_plot_files_[2] << play_time_ << " " << x_desired_12d(2) << " " << x_12d_(2) <<
 		endl;
 	}
 }
