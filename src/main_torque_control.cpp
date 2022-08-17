@@ -90,7 +90,7 @@ int main()
   
   // Force * 4
   const double force_thresholds_acceleration = 30.0;
-  const double force_thresholds_nominal = 40.0;
+  const double force_thresholds_nominal = 50.0;
   //////////////////////////////////////////////////////////////////////////////
 
   const std::array<double, 6> force_thresholds_accelerations{{

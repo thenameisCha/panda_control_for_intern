@@ -12,17 +12,17 @@
 #define TANK_E_LOWER_LIMIT 5
 #define TANK_E_SMOOTHING 5
 #define TANK_E_EPSILON 0.02
-#define PORT_POWER_UPPER_LIMIT_2 0.8
-#define PORT_POWER_LOWER_LIMIT_2 -0.8
-#define PORT_POWER_UPPER_LIMIT_1 0.2
-#define PORT_POWER_LOWER_LIMIT_1 -0.2
-#define PORT_POWER_UPPER_LIMIT_0 0.3
-#define PORT_POWER_LOWER_LIMIT_0 -0.3
-#define TANK_POWER_UPPER_LIMIT 0.3 // F_ext differs by this 
-#define TANK_POWER_LOWER_LIMIT -0.3
-#define S_UR_MAX 0.5
-#define S_UR_SMOOTHING 0.02
-#define DESIRED_FORCE 10
+#define PORT_POWER_UPPER_LIMIT_2 10
+#define PORT_POWER_LOWER_LIMIT_2 -0.4 // -0.4
+#define PORT_POWER_UPPER_LIMIT_1 10
+#define PORT_POWER_LOWER_LIMIT_1 -0.4 // -0.2
+#define PORT_POWER_UPPER_LIMIT_0 10
+#define PORT_POWER_LOWER_LIMIT_0 -1.0 // -0.3
+#define TANK_POWER_UPPER_LIMIT 10 // F_ext differs by this 0.3
+#define TANK_POWER_LOWER_LIMIT -0.6 // -0.3
+#define S_UR_MAX 0.15 // 0.15
+#define S_UR_SMOOTHING 0.1
+#define DESIRED_FORCE 10 // 10
 
 void ArmController::compute()
 {
@@ -137,20 +137,27 @@ void ArmController::initialize_ETank_controller(){
 	Ix = 2.3 * Matrix6d::Identity();
 	Kp =  scale2 * Matrix6d::Identity();
 	Kp.topLeftCorner(3,3) = Kp.topLeftCorner(3,3) * 30; // 50
-	Kp.bottomRightCorner(3,3) = Kp.bottomRightCorner(3,3) * 10; // 20
+	Kp.bottomRightCorner(3,3) = Kp.bottomRightCorner(3,3) * 4; // 20
 	Kd = 0*scale2 * Matrix6d::Identity();
 	Ki = 0 * scale2 * Matrix6d::Identity();
 	Ki.topLeftCorner(3,3) = Ki.topLeftCorner(3,3) * 10;
-	Ki.bottomRightCorner(3,3) = Ki.bottomRightCorner(3,3) * 1;
+	Ki.bottomRightCorner(3,3) = Ki.bottomRightCorner(3,3) * 0.2;
 
-	Kx.topLeftCorner(3,3) = Kx.topLeftCorner(3,3) * 1000; //1000
-	Dx.topLeftCorner(3,3) = Dx.topLeftCorner(3,3) * 200;  //150 before 80
+	Kx.topLeftCorner(3,3) = Kx.topLeftCorner(3,3) * 950; //1000
+	Dx.topLeftCorner(3,3) = Dx.topLeftCorner(3,3) * 350;  //200
 	Ix.topLeftCorner(3,3) = Ix.topLeftCorner(3,3) * 110;  //110
-	Kx.bottomRightCorner(3,3) = Kx.bottomRightCorner(3,3) * 100;
-	Dx.bottomRightCorner(3,3) = Dx.bottomRightCorner(3,3) * 10;
+	Kx.bottomRightCorner(3,3) = Kx.bottomRightCorner(3,3) * 76; //100
+	Dx.bottomRightCorner(3,3) = Dx.bottomRightCorner(3,3) * 6; //6
 	joint_damping = scale3 * Matrix7d::Identity();
 	F_ext_Error.setZero();
-	
+
+	Kx(1,1) = scale * 100;   //100 
+	Dx(1,1) = scale * 20;    // 20
+	//Kx(0,0) = scale * 500;
+	//Dx(0,0) = scale * 0;
+
+	//Kp(1,1) = scale2 * 20;
+
 	is_mode_changed_ = false;
 	is_wrench_modified = 0;
 	control_start_time_ = play_time_;
@@ -166,7 +173,7 @@ void ArmController::initialize_ETank_controller(){
 	x_target_6d(2) -= 0.2;
 	rotation_target = rotation_init_;
 	rotation_target_vector = rotation_init_in_vector;
-	x_desired_dot_f << 0.0, 0.0, -0.04, 0, 0, 0; // FOR TEST!!!!
+	x_desired_dot_f << 0.0, 0.0, -0.04, 0, 0, 0;
 }
 
 void ArmController::initialize_Force_Test(){
@@ -236,7 +243,7 @@ void ArmController::calculate_desired_ETank(double duration){
 	// x_error_ = x_desired_6d - x_6d_;
 	x_error_dot_ = x_desired_dot_ - x_dot_;
 	x_error_integral += x_error_ / hz_;
-	x_desired_dot_ = x_desired_dot_f;
+	x_desired_dot_ = x_desired_dot_f; 
 }
 
 void ArmController::calculate_desired_Test(){
@@ -293,8 +300,9 @@ void ArmController::update_torque_input(){
 	}
 	else if (control_mode_ == "ETank"){
 	//Calculate impedance control input
-	tau_imp = j_.transpose() * (Kx*x_error_ + Dx*(-x_dot_control));//+ Ix*x_error_integral); // This method's gamma does not affect x_error or force control
-	
+	tau_imp = j_.transpose() * (Kx*x_error_ + Dx*(x_desired_dot_control-x_dot_));//+ Ix*x_error_integral); // This method's gamma does not affect x_error or force control
+	//x_desired_dot_control을 넣는게 맞는 선택인가?!
+
 	//Calculate F_F
 	if (tick_ % 1000 == 0) F_integral.setZero();
 	F_integral += (F_ext_new-F_desired)/hz_;
@@ -337,26 +345,6 @@ void ArmController::indi_power_limit(){
 			port_gamma[i] = pt_low[i] / port_power[i];
 		}
 	}
-
-		// SECOND METHOD
-	// if (port_gamma[2] * port_power[2] > PORT_POWER_UPPER_LIMIT_2 && PORT_POWER_UPPER_LIMIT_2 >= 0){
-	// 	port_gamma[2] =  0;
-	// }
-	// else if (port_gamma[2] * port_power[2] < PORT_POWER_LOWER_LIMIT_2 && PORT_POWER_LOWER_LIMIT_2 <= 0){
-	// 	port_gamma[2] =0;
-	// }
-	// if (port_gamma[1] * port_power[1] > PORT_POWER_UPPER_LIMIT_1 && PORT_POWER_UPPER_LIMIT_1 >= 0){
-	// 	port_gamma[1] = 0;
-	// }
-	// else if (port_gamma[1] * port_power[1] < PORT_POWER_LOWER_LIMIT_1 && PORT_POWER_LOWER_LIMIT_1 <= 0){
-	// 	port_gamma[1] =0;
-	// }
-	// if (port_gamma[0] * port_power[0] > PORT_POWER_UPPER_LIMIT_0 && PORT_POWER_UPPER_LIMIT_0 >= 0){
-	// 	port_gamma[0] = 0;
-	// }
-	// else if (port_gamma[0] * port_power[0] < PORT_POWER_LOWER_LIMIT_0 && PORT_POWER_LOWER_LIMIT_0 <= 0){
-	// 	port_gamma[0] =  0;
-	// }
 }
 
 void ArmController::tank_power_limit(){
@@ -368,10 +356,10 @@ void ArmController::tank_power_limit(){
 void ArmController::EGS(){
 //EGS
 	if (port_gamma.dot(port_power) > TANK_POWER_UPPER_LIMIT && TANK_POWER_UPPER_LIMIT >= 0){
-		for (int i = 0; i < 3; i++) port_gamma[i] = port_gamma[0] * TANK_POWER_UPPER_LIMIT / (port_gamma.dot(port_power));
+		for (int i = 0; i < 3; i++) port_gamma[i] = port_gamma[i] * TANK_POWER_UPPER_LIMIT / (port_gamma.dot(port_power));
 	}
 	else if (port_gamma.dot(port_power) < TANK_POWER_LOWER_LIMIT && TANK_POWER_LOWER_LIMIT <= 0){
-		for (int i = 0; i < 3; i++) port_gamma[i] = port_gamma[0] * TANK_POWER_LOWER_LIMIT / (port_gamma.dot(port_power));
+		for (int i = 0; i < 3; i++) port_gamma[i] = port_gamma[i] * TANK_POWER_LOWER_LIMIT / (port_gamma.dot(port_power));
 	}
 }
 void ArmController::SGA(){
@@ -532,9 +520,8 @@ void ArmController::readData(const Vector7d &position, const Vector7d &velocity,
 		F_ext_old = F_ext_new;
 		if (abs(ee_force(i)) < 10e5 && abs(ee_force(i)) > 10e-3) F_ext_new(i) = -ee_force(i) - F_ext_Error(i)/10;
 	}
-	//if (abs(F_ext_new(2)) >= 6) 
-	F_desired << 0, 0, DESIRED_FORCE, 0, 0, 0;
-	//else  F_desired = F_ext_new;
+	//F_desired << 0, DESIRED_FORCE, 0,  0, 0, 0;
+	F_desired << 0, 0, DESIRED_FORCE,  0, 0, 0;
 }
 // TEST FOR JOINT TORQUE
 void ArmController::readData(const Vector7d &position, const Vector7d &velocity, const Vector7d &ext_torque){
@@ -611,30 +598,30 @@ void ArmController::printState()
 			// cout << std::fixed << std::setprecision(3) << x_6d_.transpose() << endl;
 			// cout << "x init :\t" << endl;
 			// cout << std::fixed << std::setprecision(3) << x_init_6d.transpose() << endl;
-			// cout << "x error :\t" << endl;
-			// cout << std::fixed << std::setprecision(3) << x_error_.transpose() << endl;
-			cout << "tank E :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << tank_E << endl;
+			cout << "x error :\t" << endl;
+			cout << std::fixed << std::setprecision(3) << x_error_.transpose() << endl;
+			// cout << "tank E :\t" << endl;
+			// cout << std::fixed << std::setprecision(3) << tank_E << endl;
 			//cout << "port power :\t" << endl;
 			//cout << std::fixed << std::setprecision(3) << port_power.transpose() << endl;
 			cout << "port gamma :\t" << endl;
 			cout << std::fixed << std::setprecision(3) << port_gamma.transpose() << endl;
-			cout << "Torque input :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << torque_input.transpose() << endl;
-			cout << "Tau imp :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << tau_imp.transpose() << endl;
-			cout << "F_F: \t" << endl;
-			cout << std::fixed << std::setprecision(3) << F_F.transpose() << endl;	
+			// cout << "Torque input :\t" << endl;
+			// cout << std::fixed << std::setprecision(3) << torque_input.transpose() << endl;
+			// cout << "Tau imp :\t" << endl;
+			// cout << std::fixed << std::setprecision(3) << tau_imp.transpose() << endl;
+			// cout << "F_F: \t" << endl;
+			// cout << std::fixed << std::setprecision(3) << F_F.transpose() << endl;	
 			cout << "f_ext: \t" << endl;
 			cout << std::fixed << std::setprecision(3) << F_ext_new.transpose() << endl;	
 			//cout << "imp f_control: \t" << endl;
 			//cout << std::fixed << std::setprecision(3) << (Kx*x_error_ + Dx*(-x_dot_control)).transpose() << endl;
-			cout << "f_desired: \t" << endl;
-			cout << std::fixed << std::setprecision(3) << F_desired.transpose() << endl;	
+			// cout << "f_desired: \t" << endl;
+			// cout << std::fixed << std::setprecision(3) << F_desired.transpose() << endl;	
 			// cout << "f_ext_Error: \t" << endl;
 			// cout << std::fixed << std::setprecision(3) << F_ext_Error.transpose() << endl;	
-			cout << "S_ur :\t" << endl;
-			cout << std::fixed << std::setprecision(3) << S_ur << endl;		
+			// cout << "S_ur :\t" << endl;
+			// cout << std::fixed << std::setprecision(3) << S_ur << endl;		
 			//cout << "playtime :\t" << endl;
 			//cout << std::fixed << std::setprecision(3) << play_time_ << endl;
 		}
@@ -676,9 +663,10 @@ void ArmController::record(double duration)
 	}
 	if (play_time_ < control_start_time_ + duration + 1.0)
 	{
-		hw_plot_files_[2] << play_time_ << " " << x_desired_12d(2) << " " << x_12d_(2) <<
+		hw_plot_files_[2] << play_time_ << " " << x_desired_12d(2) << " " << x_12d_(2) << " "  << F_ext_new(2) << " " << 
 		endl;
 	}
+
 }
 
 
