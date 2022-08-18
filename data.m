@@ -1,4 +1,6 @@
 close all; clear all; clc;
+ p_smooth = 0.9;
+
     fileID = fopen('build/ETank_data.txt', 'r');
     formatspec = '%f %f %f %f %f';
     sizeB = [6, inf];
@@ -8,12 +10,12 @@ close all; clear all; clc;
     figure(1);
     plot(B(:,1), B(:,2));
     hold on;
-    plot(B(:,1), B(:,3));
+    xdot_smooth = csaps(B(:,1),B(:,3),p_smooth,B(:,1));
+    plot(B(:,1), xdot_smooth);
     legend("x desired dot", "x dot");
     xlabel("play time, [s]");
-    ylabel("task space Z velocity, [m/s]");
-    title("ETank applied");
-    xlim([0,10]);
+    
+    ylabel("task space Z velocity, [m/s]");    
 
     figure(2);
     ylim([-0.2, 1.2]);
@@ -24,14 +26,12 @@ close all; clear all; clc;
     xlabel("play time, [s]");
     ylabel("Gamma");
     legend("x_(dot) gamma", "x_(desired, dot) gamma");
-    title("ETank applied");
     
 
     figure(3)
     plot(B(:,1), B(:,6));
     xlabel("play time, [s]");
     ylabel("S_ur [J]");
-    title("ETank applied");
 
     fileID = fopen('build/Power_data.txt', 'r');
     formatspec = '%f %f %f %f %f';
@@ -40,26 +40,27 @@ close all; clear all; clc;
     fclose(fileID);
     C = C';
     figure(4);
-    plot(C(:,1), C(:,2));
+    power0_smooth = csaps(C(:,1)', C(:,2)', p_smooth, C(:,1));
+    plot(C(:,1), power0_smooth);
     hold on;
-    plot(C(:,1), C(:,3));
+    power1_smooth = csaps(C(:,1)', C(:,3)', p_smooth, C(:,1));
+    plot(C(:,1), power1_smooth);
     hold on;
-    plot(C(:,1), C(:,4));
-    legend("x_(dot)*F_F", "x_(desired, dot)*F_F", "x_(desired, dot)*F_ext");
+    power2_smooth = csaps(C(:,1)', C(:,4)', p_smooth, C(:,1));
+    plot(C(:,1), power2_smooth);
+    legend("x dot*F_F", "x desired dot*F_F", "x desired dot*F ext");
     xlabel("play time, [s]");
     ylabel("Port Power, [J/s]");
-    title("ETank applied");
 
     figure(5);
     plot(C(:,1), C(:,5));
     xlabel("play time, [s]");
-    ylabel("Tank Energy");
-    title("ETank applied");
-    ylim([10,13]);
+    ylabel("Tank Energy, [J]");
+    ylim([8,13]);
     
     fileID = fopen('build/Position_data.txt', 'r');
-    formatspec = '%f %f %f';
-    sizeA = [3, inf];
+    formatspec = '%f %f %f %f';
+    sizeA = [4, inf];
     A = fscanf(fileID, formatspec, sizeA);
     fclose(fileID);
     A = A';
@@ -70,5 +71,13 @@ close all; clear all; clc;
     plot(A(:,1), A(:, 3));
     xlabel("play time, [s]");
     ylabel("position [m]");
-    title("ETank applied");
     legend("x desired", "x current");
+    
+    figure(7);
+    f_ext_smooth = csaps(A(:,1)', A(:,4)', p_smooth, A(:,1));
+    plot(A(:,1), f_ext_smooth);
+    xlabel("play time, [s]");
+    ylabel("f ext y-axis[N]");
+
+    
+  
